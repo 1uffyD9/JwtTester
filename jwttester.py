@@ -11,7 +11,7 @@ import argparse, textwrap
 from urllib.parse import unquote
 
 class JwtTester:
-    
+
     # https://pkg.go.dev/github.com/whitedevops/colors
     # 0-red, 1-purple, 2-blue, 3-normal, 4-green, 5-yellow
     color_code = ['\033[31m', '\033[35m', '\033[34m', '\033[39m', '\033[32m', '\033[33m']
@@ -35,15 +35,19 @@ class JwtTester:
             with open(args.payload, 'rb') as payload: args.payload = payload.read().strip()
 
         # decode URL encoded values of the token and split
-        if args.token : args.token = unquote(args.token).split('.')
+        if args.token :
+            if isinstance(args.token, bytes):
+                args.token = unquote(args.token.decode('utf-8')).split('.')
+            else:
+                args.token = unquote(args.token).split('.')
 
         # check if the provided header and payload have valid json string or not
         if args.header:
-            try: 
+            try:
                 json.loads(args.header)
             except:
                 sys.exit("{}[!]{} Header doesn't have a valid json string! (Valid JSON Ex : {{\"alg\":\"None\"}}). Please try again.".format(self.color_code[0], self.color_code[3]))
-        
+
         if args.payload:
             try:
                 json.loads(args.payload)
@@ -61,36 +65,36 @@ class JwtTester:
 
             else:
                 sys.exit("{}[!]{} Token is missing in order to use decode method!".format(self.color_code[0], self.color_code[3]))
-        
+
         elif args.method == 'brute':
             # to do : brute with default 10 threads
 
             if args.token and args.key:
                 if path.isfile(args.key):
                     with open(args.key, 'rb') as wordlist:
-                        if args.no_space: 
+                        if args.no_space:
                             args.key = filter(None, (line.rstrip() for line in wordlist))
                         else:
                             args.key = filter(None, (line.replace(b'\n',b'') for line in wordlist))
-                        
+
                         # bruteforce the key
                         try:
                             self.jwt_brute(args.token, args.key, args.no_color)
                         except KeyboardInterrupt:
-                            sys.exit("{}[!]{} Keyboard Interruption occured! Exiting the program.".format(self.color_code[0], self.color_code[3]))  
-                        
+                            sys.exit("{}[!]{} Keyboard Interruption occured! Exiting the program.".format(self.color_code[0], self.color_code[3]))
+
                         # print(args.token, args.key)
 
                 else:
                     sys.exit("{}[!]{} Cannot find the wordlist! Please try again.".format(self.color_code[0], self.color_code[3]))
-                
+
             else:
-                sys.exit("{}[!]{} Following option(s) are missing : -t/--token, -k/--key".format(self.color_code[0], self.color_code[3])) 
-        
+                sys.exit("{}[!]{} Following option(s) are missing : -t/--token, -k/--key".format(self.color_code[0], self.color_code[3]))
+
         else:
             if args.key and path.isfile(args.key):
                 # key is provided and it is a file
-                with open(args.key, 'rb') as key: 
+                with open(args.key, 'rb') as key:
                     if args.no_space:
                         # remove tailing spaces at the end of the file
                         args.key = key.read().strip()
@@ -134,7 +138,7 @@ class JwtTester:
 
         return parser.parse_args()
 
-    
+
     def jwt_decode(self, jwt_token):
         """This will decode JWT token's header, payload, [signature] provided as strings in a list"""
 
@@ -181,8 +185,8 @@ class JwtTester:
 
     def jwt_create(self, header, payload, key, no_color=False):
         """Creating the JWT token. will accept header and payload as sring / bytes"""
-        # key is a single string 
-        # convertine all to bytes 
+        # key is a single string
+        # convertine all to bytes
         try:
             # if header not provided as a file
             header = header.encode('utf-8')
@@ -224,7 +228,7 @@ class JwtTester:
             signature = self.invoke_jhmac(value, key)
 
         if not no_color:
-            # ok to print color 
+            # ok to print color
             print("{}[*]{} JWT : {}{}{}.{}{}{}.{}{}{}".format(self.color_code[4], self.color_code[3],
                                                                 self.color_code[0], header.decode('utf-8'), self.color_code[3],
                                                                 self.color_code[1], payload.decode('utf-8'), self.color_code[3],
@@ -234,7 +238,7 @@ class JwtTester:
 
     def jwt_brute(self, jwt_token, keys, no_color=False):
         """Bruteforcing the secret key or public key to find a valid key"""
-        
+
         # Note : keys is a list contains the keys in bytes
         #        token is a list contains the parts of JWT
 
@@ -244,12 +248,12 @@ class JwtTester:
                 print("{}[!]{} Empty signature detected. Continuing..".format(self.color_code[5], self.color_code[3]))
 
             try:
-                # check if the invalid string in jwt_token while getting alg 
+                # check if the invalid string in jwt_token while getting alg
                 # jwt_token is pass by value. Otherwise alteration made by other function will be affecting everywhere in the current context
                 alg = json.loads(self.jwt_decode(jwt_token.copy())[0])['alg']
                 key_found = False
 
-                # to do : 
+                # to do :
                 #   threading
                 #   progress bar
                 if alg == 'HS256':
@@ -271,8 +275,8 @@ class JwtTester:
                                 key_found = True
                                 sys.exit("{}[*]{} Found the password : {}{}{}".format(self.color_code[4], self.color_code[3], self.color_code[4], key.decode('ISO-8859-1'), self.color_code[3]))
                             count += 1
-                
-                if not key_found: 
+
+                if not key_found:
                     sys.exit("{}[!]{} Key not found! Try again with a different wordlist. or try again with/without ---no-space flag".format(self.color_code[0], self.color_code[3]))
 
             except Exception:
@@ -280,9 +284,8 @@ class JwtTester:
 
         else:
             sys.exit("{}[!]{} Signature not detected in the token! Check the token string and try again.".format(self.color_code[0], self.color_code[3]))
-  
+
 
 
 if __name__ == '__main__':
     JwtTester()
-
