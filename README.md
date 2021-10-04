@@ -28,6 +28,7 @@ optional arguments:
 ```bash
 $ git clone https://github.com/1uffyD9/JwtTester.git
 $ cd JwtTester
+$ chmod +x jwttester.py
 $ sudo ln -sf `pwd`/jwttester.py /usr/local/bin/jwttester`
 ```
 
