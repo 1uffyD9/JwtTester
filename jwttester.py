@@ -9,6 +9,11 @@ from os import path
 import base64 as b64
 import argparse, textwrap
 from urllib.parse import unquote
+import time  # Add time module for timestamp generation
+from datetime import datetime, timedelta  # For calculating future timestamps
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 
 class JwtTester:
 
@@ -89,7 +94,7 @@ class JwtTester:
                     sys.exit("{}[!]{} Cannot find the wordlist! Please try again.".format(self.color_code[0], self.color_code[3]))
 
             else:
-                sys.exit("{}[!]{} Following option(s) are missing : -t/--token, -k/--key".format(self.color_code[0], self.color_code[3]))
+                sys.exit("{}[!]{} Following option(s) are missing : -t/--token, -k/--key".format(self.color_code[0, self.color_code[3]]))
 
         else:
             if args.key and path.isfile(args.key):
@@ -182,11 +187,59 @@ class JwtTester:
         # returning bytes string
         return (b64.urlsafe_b64encode(hmac.new(key, value, hashlib.sha256).digest())).replace(b'=', b'')
 
+    def invoke_ps256_sign(self, value, private_key):
+        """Creating signature using PS256 (RSASSA-PSS with SHA-256)"""
+        try:
+            # Try to load the private key
+            key = load_pem_private_key(private_key, password=None)
+            
+            # Sign the data
+            signature = key.sign(
+                value,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            
+            # Return base64url encoded signature
+            return b64.urlsafe_b64encode(signature).replace(b'=', b'')
+        except Exception as e:
+            sys.exit(f"{self.color_code[0]}[!]{self.color_code[3]} PS256 signing error: {str(e)}")
+
+    def verify_ps256(self, value, signature, public_key):
+        """Verify PS256 signature with the given public key"""
+        try:
+            # Try to load the public key
+            key = load_pem_public_key(public_key)
+            
+            # Add padding to signature if needed
+            padding_needed = len(signature) % 4
+            if padding_needed:
+                signature += b'=' * (4 - padding_needed)
+                
+            # Decode signature
+            decoded_sig = b64.urlsafe_b64decode(signature)
+            
+            # Verify the signature
+            key.verify(
+                decoded_sig,
+                value,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            return True
+        except Exception:
+            return False
 
     def jwt_create(self, header, payload, key, no_color=False):
-        """Creating the JWT token. will accept header and payload as sring / bytes"""
+        """Creating the JWT token. will accept header and payload as string / bytes"""
         # key is a single string
-        # convertine all to bytes
+        # converting all to bytes
         try:
             # if header not provided as a file
             header = header.encode('utf-8')
@@ -210,6 +263,29 @@ class JwtTester:
         except:
             sys.exit("{}[!]{} Invalid header is found! Please try again.".format(self.color_code[0], self.color_code[3]))
 
+        # Add dynamic exp and iat to payload if not present
+        try:
+            payload_obj = json.loads(payload)
+            current_time = int(time.time())
+            
+            # Add issued at time if not present
+            if 'iat' not in payload_obj:
+                payload_obj['iat'] = current_time
+                print(f"{self.color_code[5]}[*]{self.color_code[3]} Added 'iat' claim: {current_time} ({datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S')})")
+            
+            # Add expiration time if not present (15 minutes from now)
+            if 'exp' not in payload_obj:
+                exp_time = current_time + (15 * 60)  # 15 minutes in seconds
+                payload_obj['exp'] = exp_time
+                print(f"{self.color_code[5]}[*]{self.color_code[3]} Added 'exp' claim: {exp_time} ({datetime.fromtimestamp(exp_time).strftime('%Y-%m-%d %H:%M:%S')})")
+            
+            # Update the payload with new values
+            payload = json.dumps(payload_obj).encode('utf-8')
+        except json.JSONDecodeError:
+            sys.exit("{}[!]{} Failed to parse payload as JSON".format(self.color_code[0], self.color_code[3]))
+        except Exception as e:
+            print(f"{self.color_code[5]}[!]{self.color_code[3]} Warning: Could not update claims: {str(e)}")
+
         # create base64UrlEncoded header
         # strip out the equal sign
         header = (b64.urlsafe_b64encode(header)).replace(b'=', b'')
@@ -222,10 +298,15 @@ class JwtTester:
         value = b'%s.%s' % (header, payload)
         signature = b''
 
-        print(alg)
         if alg == 'HS256':
             # if the key is provided
             signature = self.invoke_jhmac(value, key)
+        elif alg == 'PS256':
+            # if the key is provided (should be RSA private key in PEM format)
+            signature = self.invoke_ps256_sign(value, key)
+        else:
+            # No signature or unsupported algorithm
+            print(f"{self.color_code[5]}[!]{self.color_code[3]} Algorithm {alg} is not supported or doesn't require a signature.")
 
         if not no_color:
             # ok to print color
@@ -260,7 +341,7 @@ class JwtTester:
                     # if the alg is SHA256
                     count = 1
                     for key in keys:
-                        # handline non-ascii chars in wordlist files
+                        # handling non-ascii chars in wordlist files
                         try:
                             print("[{}] Trying : {}".format(count, key.decode('utf-8')[:50].ljust(50)), end='\r', flush=True)
                             if self.invoke_jhmac('.'.join(jwt_token[:2]).encode('utf-8'), key).decode('utf-8') == jwt_token[2]:
@@ -269,22 +350,35 @@ class JwtTester:
                             count += 1
                         except UnicodeDecodeError:
                             # https://stackoverflow.com/questions/19699367/for-line-in-results-in-unicodedecodeerror-utf-8-codec-cant-decode-byte
-
                             print("[{}] Trying : {}".format(count, key[:50].ljust(50)), end='\r', flush=True)
                             if self.invoke_jhmac('.'.join(jwt_token[:2]).encode('utf-8'), key).decode('utf-8') == jwt_token[2]:
                                 key_found = True
                                 sys.exit("{}[*]{} Found the password : {}{}{}".format(self.color_code[4], self.color_code[3], self.color_code[4], key.decode('ISO-8859-1'), self.color_code[3]))
                             count += 1
+                elif alg == 'PS256':
+                    # if the alg is PS256
+                    count = 1
+                    token_data = '.'.join(jwt_token[:2]).encode('utf-8')
+                    
+                    for key in keys:
+                        try:
+                            print("[{}] Trying public key...".format(count).ljust(60), end='\r', flush=True)
+                            if self.verify_ps256(token_data, jwt_token[2].encode('utf-8'), key):
+                                key_found = True
+                                sys.exit("{}[*]{} Found the public key!".format(self.color_code[4], self.color_code[3]))
+                            count += 1
+                        except Exception as e:
+                            print("[{}] Error with key: {}".format(count, str(e)[:50]).ljust(60), end='\r', flush=True)
+                            count += 1
 
                 if not key_found:
                     sys.exit("{}[!]{} Key not found! Try again with a different wordlist. or try again with/without ---no-space flag".format(self.color_code[0], self.color_code[3]))
 
-            except Exception:
-                sys.exit("{}[!]{} Invalid string detected! Check the token string and try again. {}".format(self.color_code[0], self.color_code[3]))
+            except Exception as e:
+                sys.exit("{}[!]{} Invalid string detected! Check the token string and try again. {}".format(self.color_code[0], self.color_code[3], str(e)))
 
         else:
             sys.exit("{}[!]{} Signature not detected in the token! Check the token string and try again.".format(self.color_code[0], self.color_code[3]))
-
 
 
 if __name__ == '__main__':
